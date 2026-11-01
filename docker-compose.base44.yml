@@ -1,0 +1,86 @@
+name: hope
+
+services:
+  api:
+    image: python:3.12-slim
+    working_dir: /app
+    restart: on-failure
+    command:
+      - sh
+      - -ec
+      - |
+        pip install --quiet --no-cache-dir -r requirements.txt
+        exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app
+    volumes:
+      - ./api:/app
+      - hope_data:/data
+    env_file:
+      - /run/base44/app.env
+    environment:
+      - HOPE_DB_PATH=/data/hope.db
+      - HOPE_MODEL=${HOPE_MODEL:-gemini-2.5-flash}
+      - HOPE_ALLOWED_ORIGINS=https://3000-${BASE44_PUBLIC_HOST_SUFFIX},http://localhost:3000,http://127.0.0.1:3000
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Berlin
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          try:
+              sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=3).status == 200 else 1)
+          except Exception:
+              sys.exit(1)
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+    labels:
+      base44.project: "HOPE API"
+      base44.kind: "api"
+      base44.port: "8000"
+      base44.docs: "/docs"
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    restart: on-failure
+    command:
+      - sh
+      - -ec
+      - npm install --no-audit --no-fund --loglevel=error && exec npm run dev -- --host 0.0.0.0 --port 3000
+    volumes:
+      - ./web:/app
+      - hope_node_modules:/app/node_modules
+    environment:
+      - BASE44_PREVIEW_MODE
+      - BASE44_SANDBOX_HOST_DOMAIN
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+      - VITE_API_PROXY_TARGET=http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+    labels:
+      base44.project: "HOPE Interface"
+      base44.kind: "web"
+      base44.port: "3000"
+
+volumes:
+  hope_data:
+  hope_node_modules:
